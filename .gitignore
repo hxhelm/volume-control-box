@@ -1,0 +1,9 @@
+# nix shell
+/.direnv
+
+# will have compiled files and executables
+debug/
+target/
+
+# Editor configuration
+.nvim.lua
