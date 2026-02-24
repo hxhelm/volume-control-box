@@ -8,8 +8,10 @@
 #![deny(clippy::large_stack_frames)]
 
 use esp_hal::clock::CpuClock;
+use esp_hal::delay::Delay;
 use esp_hal::main;
-use esp_hal::time::{Duration, Instant};
+use esp_hal::rmt::{PulseCode, Rmt, RxChannelConfig, RxChannelCreator};
+use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use log::info;
 
@@ -30,8 +32,6 @@ esp_bootloader_esp_idf::esp_app_desc!();
 )]
 #[main]
 fn main() -> ! {
-    // generator version: 1.2.0
-
     esp_println::logger::init_logger_from_env();
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
@@ -41,16 +41,89 @@ fn main() -> ! {
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
-    let radio_init = esp_radio::init().expect("Failed to initialize Wi-Fi/BLE controller");
-    let (mut _wifi_controller, _interfaces) =
-        esp_radio::wifi::new(&radio_init, peripherals.WIFI, Default::default())
-            .expect("Failed to initialize Wi-Fi controller");
+
+    // TODO: set up wifi connection for home-assistant integration
+    // let radio_init = esp_radio::init().expect("Failed to initialize Wi-Fi/BLE controller");
+    // let (mut _wifi_controller, _interfaces) =
+    //     esp_radio::wifi::new(&radio_init, peripherals.WIFI, Default::default())
+    //         .expect("Failed to initialize Wi-Fi controller");
+
+    // info!("Wi-Fi controller set up!");
+
+    // Configure frequency based on chip type
+    let freq = Rate::from_mhz(80);
+    let rmt = Rmt::new(peripherals.RMT, freq)
+        .expect("Failed to initialize Remote Control Transceiver instance");
+
+    let rx_config = RxChannelConfig::default()
+        .with_clk_divider(80)
+        .with_idle_threshold(10_000);
+    let mut channel = rmt
+        .channel2
+        .configure_rx(peripherals.GPIO4, rx_config)
+        .expect("Failed to initialize RX Channel for RMT");
+    let delay = Delay::new();
+    let mut data: [PulseCode; 48] = [PulseCode::default(); 48];
+
+    info!("RMT RX set up, beginning read loop...");
 
     loop {
-        info!("Hello world!");
-        let delay_start = Instant::now();
-        while delay_start.elapsed() < Duration::from_millis(500) {}
-    }
+        for x in data.iter_mut() {
+            x.reset()
+        }
 
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples
+        let transaction = channel.receive(&mut data).unwrap();
+
+        match transaction.wait() {
+            Ok((symbol_count, channel_res)) => {
+                channel = channel_res;
+
+                let mut bits: u32 = 0;
+                let mut bit_index = 0;
+
+                for entry in data[..symbol_count].iter().skip(1) {
+                    let low = entry.length1();
+                    let high = entry.length2();
+
+                    if low == 0 || high == 0 {
+                        break;
+                    }
+
+                    // Expect ~560µs LOW
+                    if !(400..=700).contains(&low) {
+                        continue;
+                    }
+
+                    // Determine bit from HIGH duration
+                    if high > 1000 {
+                        bits |= 1 << bit_index;
+                    }
+
+                    bit_index += 1;
+
+                    if bit_index >= 32 {
+                        break;
+                    }
+                }
+
+                info!("Decoded bits: 0x{:08X}", bits);
+
+                match bits {
+                    0xF8070707 => {
+                        info!("Recognized Button: Volume Up");
+                    }
+                    0xF40B0707 => {
+                        info!("Recognized Button: Volume Down");
+                    }
+                    _ => {}
+                }
+            }
+            Err((err, channel_res)) => {
+                channel = channel_res;
+                info!("RX error: {:?}", err);
+            }
+        }
+
+        delay.delay_millis(100);
+    }
 }
