@@ -26,6 +26,23 @@ extern crate alloc;
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
 
+enum IrInput {
+    TvRemoteVolUp,
+    TvRemoteVolDown,
+}
+
+impl TryFrom<u32> for IrInput {
+    type Error = &'static str;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0xF8070707 => Ok(IrInput::TvRemoteVolUp),
+            0xF40B0707 => Ok(IrInput::TvRemoteVolDown),
+            _ => Err("Unmapped value for IrInput."),
+        }
+    }
+}
+
 #[allow(
     clippy::large_stack_frames,
     reason = "it's not unusual to allocate larger buffers etc. in main"
@@ -108,15 +125,9 @@ fn main() -> ! {
 
                 info!("Decoded bits: 0x{:08X}", bits);
 
-                match bits {
-                    0xF8070707 => {
-                        info!("Recognized Button: Volume Up");
-                    }
-                    0xF40B0707 => {
-                        info!("Recognized Button: Volume Down");
-                    }
-                    _ => {}
-                }
+                let Ok(ir_input) = IrInput::try_from(bits) else {
+                    continue;
+                };
             }
             Err((err, channel_res)) => {
                 channel = channel_res;
