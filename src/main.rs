@@ -9,9 +9,11 @@
 
 use esp_hal::clock::CpuClock;
 use esp_hal::delay::Delay;
-use esp_hal::gpio::{Level, Output, OutputConfig};
-use esp_hal::main;
+use esp_hal::spi::Mode;
+use esp_hal::spi::master::{Config, Spi};
+use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
+use esp_hal::{Blocking, main};
 use utils::ir_input::{IrInput, IrReceiver};
 use utils::storage::VolumeStorage;
 
@@ -45,7 +47,7 @@ fn main() -> ! {
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
-    let mut delay = Delay::new();
+    let delay = Delay::new();
 
     // TODO: set up wifi connection for home-assistant integration
     // let radio_init = esp_radio::init().expect("Failed to initialize Wi-Fi/BLE controller");
@@ -54,13 +56,19 @@ fn main() -> ! {
     //         .expect("Failed to initialize Wi-Fi controller");
     // info!("Wi-Fi controller set up!");
 
-    // communication with volume board
-    let mut clock = Output::new(peripherals.GPIO18, Level::Low, OutputConfig::default());
-    let mut data = Output::new(peripherals.GPIO19, Level::Low, OutputConfig::default());
+    let mut spi = Spi::new(
+        peripherals.SPI2,
+        Config::default()
+            .with_frequency(Rate::from_khz(100))
+            .with_mode(Mode::_0),
+    )
+    .unwrap()
+    .with_sck(peripherals.GPIO18)
+    .with_mosi(peripherals.GPIO19);
 
     let mut volume_storage = VolumeStorage::new(peripherals.FLASH);
     let mut volume = volume_storage.read_volume();
-    set_volume(volume, &mut clock, &mut data, &mut delay);
+    set_volume_spi(&mut spi, volume);
 
     let mut ir_receiver = IrReceiver::new(peripherals.RMT, peripherals.GPIO4);
 
@@ -81,13 +89,13 @@ fn main() -> ! {
 
             if volume_buffer > volume {
                 for v in volume..=volume_buffer {
-                    set_volume(v, &mut clock, &mut data, &mut delay);
-                    delay.delay_millis(5);
+                    set_volume_spi(&mut spi, v);
+                    delay.delay_millis(2);
                 }
             } else {
                 for v in volume_buffer..=volume {
-                    set_volume(v, &mut clock, &mut data, &mut delay);
-                    delay.delay_millis(5);
+                    set_volume_spi(&mut spi, v);
+                    delay.delay_millis(2);
                 }
             };
         }
@@ -96,32 +104,7 @@ fn main() -> ! {
     }
 }
 
-fn set_volume(vol: u8, clock: &mut Output<'_>, data: &mut Output<'_>, delay: &mut Delay) {
-    send_byte(vol, clock, data, delay);
-    send_byte(vol, clock, data, delay);
-}
-
-fn send_byte(mut value: u8, clock: &mut Output<'_>, data: &mut Output<'_>, delay: &mut Delay) {
-    for _ in 0..8 {
-        let bit = (value & 0x80) != 0;
-
-        if bit {
-            data.set_high();
-        } else {
-            data.set_low();
-        }
-
-        delay.delay_micros(1);
-
-        clock.set_high();
-        delay.delay_micros(1);
-
-        data.set_low();
-        delay.delay_micros(1);
-
-        clock.set_low();
-        delay.delay_micros(1);
-
-        value <<= 1;
-    }
+fn set_volume_spi(spi: &mut Spi<Blocking>, vol: u8) {
+    let frame: [u8; 2] = [vol, vol];
+    spi.write(&frame).unwrap();
 }
