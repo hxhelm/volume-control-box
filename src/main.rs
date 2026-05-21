@@ -72,18 +72,19 @@ fn main() -> ! {
     //         .expect("Failed to initialize Wi-Fi controller");
     // info!("Wi-Fi controller set up!");
 
+    delay.delay_millis(500);
+
     let config = esp_hal::i2c::master::Config::default().with_frequency(Rate::from_khz(100));
     let i2c = I2c::new(peripherals.I2C0, config)
         .expect("Failed to initialize I2C interface.")
         .with_sda(peripherals.GPIO21)
         .with_scl(peripherals.GPIO22);
 
-    let mut lcd = Lcd::new(i2c, LCD_DEVICE_ADDR).expect("Failed initializing LCD device");
-    lcd.set_display(Display::On).unwrap();
-    lcd.set_backlight(Backlight::On).unwrap();
+    delay.delay_millis(100);
 
-    lcd.clear().unwrap();
-    lcd.set_cursor_position(0, 0).unwrap();
+    let mut lcd = Lcd::new(i2c, LCD_DEVICE_ADDR).expect("Failed initializing LCD device");
+
+    delay.delay_millis(200);
 
     let mut spi = Spi::new(
         peripherals.SPI2,
@@ -95,11 +96,30 @@ fn main() -> ! {
     .with_sck(peripherals.GPIO18)
     .with_mosi(peripherals.GPIO19);
 
+    delay.delay_millis(50);
+
     let mut volume_storage = VolumeStorage::new(peripherals.FLASH);
     let mut volume = volume_storage.read_volume();
-    set_volume_spi(&mut spi, volume);
+
+    delay.delay_millis(100);
 
     let mut ir_receiver = IrReceiver::new(peripherals.RMT, peripherals.GPIO4);
+
+    delay.delay_millis(50);
+
+    set_volume_spi(&mut spi, volume);
+
+    delay.delay_millis(20);
+
+    lcd.set_display(Display::On).unwrap();
+    lcd.set_backlight(Backlight::On).unwrap();
+
+    lcd.clear().unwrap();
+    lcd.set_cursor_position(0, 0).unwrap();
+
+    print_volume(volume, &mut lcd);
+
+    delay.delay_millis(100);
 
     loop {
         let Some(ir_input) = ir_receiver.get_incoming_signal() else {
