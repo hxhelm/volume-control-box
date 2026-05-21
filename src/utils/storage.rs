@@ -4,7 +4,7 @@ use esp_storage::FlashStorage;
 
 const FLASH_ADDRESS: u32 = 0x9000;
 
-pub(crate) struct VolumeStorage<'a> {
+pub struct VolumeStorage<'a> {
     bytes: [u8; 1],
     storage: FlashStorage<'a>,
 }

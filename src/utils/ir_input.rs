@@ -1,10 +1,12 @@
+#![allow(dead_code)]
+
 use esp_hal::Blocking;
 use esp_hal::gpio::interconnect::PeripheralInput;
 use esp_hal::peripherals::RMT;
 use esp_hal::rmt::{Channel, PulseCode, Rmt, Rx, RxChannelConfig, RxChannelCreator};
 use esp_hal::time::Rate;
 
-pub(crate) enum IrInput {
+pub enum IrInput {
     TvRemoteVolUp,
     TvRemoteVolDown,
 }
@@ -21,7 +23,7 @@ impl TryFrom<u32> for IrInput {
     }
 }
 
-pub(crate) struct IrReceiver<'a> {
+pub struct IrReceiver<'a> {
     channel: Option<Channel<'a, Blocking, Rx>>,
     buffer: [PulseCode; 48],
 }

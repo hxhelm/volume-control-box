@@ -7,17 +7,19 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
+use alloc::format;
+use alloc::string::String;
 use esp_hal::clock::CpuClock;
 use esp_hal::delay::Delay;
+use esp_hal::i2c::master::I2c;
 use esp_hal::spi::Mode;
-use esp_hal::spi::master::{Config, Spi};
+use esp_hal::spi::master::Spi;
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{Blocking, main};
-use utils::ir_input::{IrInput, IrReceiver};
-use utils::storage::VolumeStorage;
-
-mod utils;
+use volume_control_box::utils::ir_input::{IrInput, IrReceiver};
+use volume_control_box::utils::lcd_screen::{Backlight, Display, Lcd};
+use volume_control_box::utils::storage::VolumeStorage;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -31,6 +33,20 @@ extern crate alloc;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 const VOLUME_INCREMENT: u8 = 4;
+const VOLUME_MAX: u8 = 0b1100_0000; // 192 for a max volume of +0db to avoid amplification
+
+const DISPLAY_MAX: u8 = 50;
+
+const LCD_DEVICE_ADDR: u8 = 0x27;
+
+#[allow(unused)]
+enum VolumeAction {
+    Up,
+    Down,
+    Mute,
+    // Expects value to be in 0..DISPLAY range
+    Set(u8),
+}
 
 #[allow(
     clippy::large_stack_frames,
@@ -56,9 +72,22 @@ fn main() -> ! {
     //         .expect("Failed to initialize Wi-Fi controller");
     // info!("Wi-Fi controller set up!");
 
+    let config = esp_hal::i2c::master::Config::default().with_frequency(Rate::from_khz(100));
+    let i2c = I2c::new(peripherals.I2C0, config)
+        .expect("Failed to initialize I2C interface.")
+        .with_sda(peripherals.GPIO21)
+        .with_scl(peripherals.GPIO22);
+
+    let mut lcd = Lcd::new(i2c, LCD_DEVICE_ADDR).expect("Failed initializing LCD device");
+    lcd.set_display(Display::On).unwrap();
+    lcd.set_backlight(Backlight::On).unwrap();
+
+    lcd.clear().unwrap();
+    lcd.set_cursor_position(0, 0).unwrap();
+
     let mut spi = Spi::new(
         peripherals.SPI2,
-        Config::default()
+        esp_hal::spi::master::Config::default()
             .with_frequency(Rate::from_khz(100))
             .with_mode(Mode::_0),
     )
@@ -79,8 +108,8 @@ fn main() -> ! {
         };
 
         let volume_buffer = match ir_input {
-            IrInput::TvRemoteVolUp => volume.saturating_add(VOLUME_INCREMENT),
-            IrInput::TvRemoteVolDown => volume.saturating_sub(VOLUME_INCREMENT),
+            IrInput::TvRemoteVolUp => update_volume(volume, VolumeAction::Up),
+            IrInput::TvRemoteVolDown => update_volume(volume, VolumeAction::Down),
         };
 
         if volume_buffer != volume {
@@ -100,6 +129,8 @@ fn main() -> ! {
             };
         }
 
+        print_volume(volume, &mut lcd);
+
         delay.delay_millis(100);
     }
 }
@@ -107,4 +138,57 @@ fn main() -> ! {
 fn set_volume_spi(spi: &mut Spi<Blocking>, vol: u8) {
     let frame: [u8; 2] = [vol, vol];
     spi.write(&frame).unwrap();
+}
+
+fn update_volume(volume: u8, action: VolumeAction) -> u8 {
+    let volume = match action {
+        VolumeAction::Up => volume.saturating_add(VOLUME_INCREMENT),
+        VolumeAction::Down => volume.saturating_sub(VOLUME_INCREMENT),
+        VolumeAction::Mute => 0,
+        VolumeAction::Set(new_volume) => display_to_volume(new_volume),
+    };
+
+    if volume > VOLUME_MAX {
+        VOLUME_MAX
+    } else {
+        volume
+    }
+}
+
+fn display_to_volume(display_volume: u8) -> u8 {
+    ((display_volume as u16).saturating_mul(VOLUME_MAX as u16)).saturating_div(DISPLAY_MAX as u16)
+        as u8
+}
+
+fn volume_to_display(internal_volume: u8) -> u8 {
+    ((internal_volume as u16).saturating_mul(DISPLAY_MAX as u16)).saturating_div(VOLUME_MAX as u16)
+        as u8
+}
+
+fn print_volume(volume: u8, lcd: &mut Lcd) {
+    lcd.clear().unwrap();
+    lcd.print(&format!("Volume: {}", volume_to_display(volume)))
+        .unwrap();
+
+    lcd.set_cursor_position(0, 1).unwrap();
+    lcd.print(&volume_to_vmeter(volume)).unwrap();
+}
+
+fn volume_to_vmeter(volume: u8) -> String {
+    let len = (volume as u16 * 14 / 192) as usize;
+
+    let mut s = String::new();
+    s.push('[');
+
+    for i in 0..14 {
+        if i < len {
+            s.push('#');
+        } else {
+            s.push(' ');
+        }
+    }
+
+    s.push(']');
+
+    s
 }

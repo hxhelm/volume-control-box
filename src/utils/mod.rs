@@ -1,2 +1,3 @@
-pub(crate) mod ir_input;
-pub(crate) mod storage;
+pub mod ir_input;
+pub mod lcd_screen;
+pub mod storage;
