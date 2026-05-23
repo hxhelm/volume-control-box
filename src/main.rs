@@ -34,9 +34,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 const VOLUME_INCREMENT: u8 = 4;
 const VOLUME_MAX: u8 = 0b1100_0000; // 192 for a max volume of +0db to avoid amplification
-
 const DISPLAY_MAX: u8 = 50;
-
 const LCD_DEVICE_ADDR: u8 = 0x27;
 
 #[allow(unused)]
@@ -117,7 +115,7 @@ fn main() -> ! {
     lcd.clear().unwrap();
     lcd.set_cursor_position(0, 0).unwrap();
 
-    print_volume(volume, &mut lcd);
+    print_volume_to_screen(volume, &mut lcd);
 
     delay.delay_millis(100);
 
@@ -149,7 +147,7 @@ fn main() -> ! {
             };
         }
 
-        print_volume(volume, &mut lcd);
+        print_volume_to_screen(volume, &mut lcd);
 
         delay.delay_millis(100);
     }
@@ -185,7 +183,7 @@ fn volume_to_display(internal_volume: u8) -> u8 {
         as u8
 }
 
-fn print_volume(volume: u8, lcd: &mut Lcd) {
+fn print_volume_to_screen(volume: u8, lcd: &mut Lcd) {
     lcd.clear().unwrap();
     lcd.print(&format!("Volume: {}", volume_to_display(volume)))
         .unwrap();
