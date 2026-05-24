@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use esp_hal::Blocking;
+use esp_hal::Async;
 use esp_hal::gpio::interconnect::PeripheralInput;
 use esp_hal::peripherals::RMT;
 use esp_hal::rmt::{Channel, PulseCode, Rmt, Rx, RxChannelConfig, RxChannelCreator};
@@ -24,7 +24,7 @@ impl TryFrom<u32> for IrInput {
 }
 
 pub struct IrReceiver<'a> {
-    channel: Option<Channel<'a, Blocking, Rx>>,
+    channel: Option<Channel<'a, Async, Rx>>,
     buffer: [PulseCode; 48],
 }
 
@@ -32,7 +32,8 @@ impl<'a> IrReceiver<'a> {
     pub fn new<T: PeripheralInput<'a>>(rmt_peripheral: RMT<'a>, receive_pin: T) -> Self {
         let freq = Rate::from_mhz(80);
         let rmt = Rmt::new(rmt_peripheral, freq)
-            .expect("Failed to initialize Remote Control Transceiver instance");
+            .expect("Failed to initialize Remote Control Transceiver instance")
+            .into_async();
         let rx_config = RxChannelConfig::default()
             .with_clk_divider(80)
             .with_idle_threshold(10_000);
@@ -49,54 +50,45 @@ impl<'a> IrReceiver<'a> {
         }
     }
 
-    pub fn get_incoming_signal(&mut self) -> Option<IrInput> {
+    pub async fn get_incoming_signal(&mut self) -> Option<IrInput> {
         for x in self.buffer.iter_mut() {
             x.reset()
         }
 
-        let channel = self.channel.take().unwrap();
+        let mut channel = self.channel.take().unwrap();
 
-        let transaction = channel.receive(&mut self.buffer).unwrap();
+        let symbol_count = channel.receive(&mut self.buffer).await.unwrap();
 
-        match transaction.wait() {
-            Ok((symbol_count, channel_res)) => {
-                self.channel = Some(channel_res);
+        self.channel = Some(channel);
 
-                let mut bits: u32 = 0;
-                let mut bit_index = 0;
+        let mut bits: u32 = 0;
+        let mut bit_index = 0;
 
-                for entry in self.buffer[..symbol_count].iter().skip(1) {
-                    let low = entry.length1();
-                    let high = entry.length2();
+        for entry in self.buffer[..symbol_count].iter().skip(1) {
+            let low = entry.length1();
+            let high = entry.length2();
 
-                    if low == 0 || high == 0 {
-                        break;
-                    }
-
-                    // Expect ~560µs LOW
-                    if !(400..=700).contains(&low) {
-                        continue;
-                    }
-
-                    // Determine bit from HIGH duration
-                    if high > 1000 {
-                        bits |= 1 << bit_index;
-                    }
-
-                    bit_index += 1;
-
-                    if bit_index >= 32 {
-                        break;
-                    }
-                }
-
-                IrInput::try_from(bits).ok()
+            if low == 0 || high == 0 {
+                break;
             }
-            Err((_err, channel_res)) => {
-                self.channel = Some(channel_res);
 
-                None
+            // Expect ~560µs LOW
+            if !(400..=700).contains(&low) {
+                continue;
+            }
+
+            // Determine bit from HIGH duration
+            if high > 1000 {
+                bits |= 1 << bit_index;
+            }
+
+            bit_index += 1;
+
+            if bit_index >= 32 {
+                break;
             }
         }
+
+        IrInput::try_from(bits).ok()
     }
 }
