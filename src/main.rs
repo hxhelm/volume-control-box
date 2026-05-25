@@ -6,7 +6,6 @@
     holding buffers for the duration of a data transfer."
 )]
 #![deny(clippy::large_stack_frames)]
-
 use alloc::format;
 use alloc::string::String;
 use core::sync::atomic::{AtomicU8, Ordering};
@@ -21,7 +20,7 @@ use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use volume_control_box::utils::ir_input::{IrInput, IrReceiver};
 use volume_control_box::utils::lcd_screen::{Backlight, Display, Lcd};
-use volume_control_box::utils::storage::VolumeStorage;
+use volume_control_box::utils::storage::{AppConfig, ConfigStorage};
 
 extern crate alloc;
 
@@ -29,7 +28,7 @@ const VOLUME_INCREMENT: u8 = 4;
 const VOLUME_MAX: u8 = 0b1100_0000; // 192 for a max volume of +0db to avoid amplification
 const DISPLAY_MAX: u8 = 50;
 const LCD_DEVICE_ADDR: u8 = 0x27;
-const FLASH_WRITE_INACTIVITY_TIMER: u8 = 1 * 30;
+const FLASH_WRITE_INACTIVITY_TIMER: u8 = 60;
 
 static CURRENT_VOLUME: AtomicU8 = AtomicU8::new(50);
 
@@ -82,7 +81,7 @@ async fn main(spawner: Spawner) {
 
     let lcd = Lcd::new(i2c, LCD_DEVICE_ADDR).expect("Failed initializing LCD device");
 
-    spawner.must_spawn(persist_volume(VolumeStorage::new(peripherals.FLASH)));
+    spawner.must_spawn(persist_volume(ConfigStorage::new(peripherals.FLASH)));
 
     // wait for volume read from flash
     Timer::after(Duration::from_millis(500)).await;
@@ -140,13 +139,23 @@ async fn ir_receive(mut ir_receiver: IrReceiver<'static>) {
     }
 }
 
+#[allow(
+    clippy::large_stack_frames,
+    reason = "Embassy async futures (sequential storage) are pretty big"
+)]
 #[embassy_executor::task]
-async fn persist_volume(mut volume_storage: VolumeStorage<'static>) {
+async fn persist_volume(mut config_storage: ConfigStorage<'static>) {
     let ticker_duration = 2;
     let mut ticker = Ticker::every(Duration::from_secs(ticker_duration as u64));
     let mut inactivity_timer = 0;
 
-    let mut persisted_volume = volume_storage.read_volume();
+    let mut buffer = [0u8; 128];
+
+    let mut persisted_volume = config_storage
+        .read_config(&mut buffer)
+        .await
+        .unwrap()
+        .volume;
     let mut last_observed_volume = persisted_volume;
 
     // initialize atomic with value from flash storage
@@ -163,7 +172,14 @@ async fn persist_volume(mut volume_storage: VolumeStorage<'static>) {
         if current_volume != persisted_volume {
             if inactivity_timer >= FLASH_WRITE_INACTIVITY_TIMER {
                 persisted_volume = current_volume;
-                volume_storage.write_volume(persisted_volume);
+                config_storage
+                    .write_config(
+                        &AppConfig {
+                            volume: persisted_volume,
+                        },
+                        &mut buffer,
+                    )
+                    .await;
             } else {
                 inactivity_timer += ticker_duration;
             }
