@@ -58,6 +58,10 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
 
+    // boot delay for GND to stabilize since the connected audio source can unfortunately mess with
+    // power of the entire circuit
+    Timer::after(Duration::from_millis(3000)).await;
+
     // TODO: set up wifi connection for home-assistant integration
     // let radio_init = esp_radio::init().expect("Failed to initialize Wi-Fi/BLE controller");
     // let (mut _wifi_controller, _interfaces) =
